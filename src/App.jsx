@@ -1,36 +1,19 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './hooks/useAuth';
 import Login from './pages/Login';
 import DriverApp from './pages/DriverApp';
 import StudentApp from './pages/StudentApp';
 import AdminPanel from './pages/AdminPanel';
 
-function App() {
-  const { user, loading } = useAuth();
+export default function App() {
+  const { user, role } = useAuth();
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <p className="text-gray-500 text-lg">Loading...</p>
-      </div>
-    );
+  if (user === undefined) {
+    return <div className="min-h-screen flex items-center justify-center text-slate-400">Loading...</div>;
   }
 
-  return (
-    <Routes>
-      {/* Public route */}
-      <Route path="/login" element={!user ? <Login /> : <Navigate to="/student" />} />
+  if (!user) return <Login />;
 
-      {/* Protected routes — redirect to login if not authenticated */}
-      <Route path="/driver" element={user ? <DriverApp /> : <Navigate to="/login" />} />
-      <Route path="/student" element={user ? <StudentApp /> : <Navigate to="/login" />} />
-      <Route path="/admin" element={user ? <AdminPanel /> : <Navigate to="/login" />} />
-
-      {/* Default route */}
-      <Route path="/" element={user ? <Navigate to="/student" /> : <Navigate to="/login" />} />
-      <Route path="*" element={<Navigate to="/" />} />
-    </Routes>
-  );
+  if (role === 'driver') return <DriverApp />;
+  if (role === 'committee') return <AdminPanel />;
+  return <StudentApp />; // default for 'student'
 }
-
-export default App;
