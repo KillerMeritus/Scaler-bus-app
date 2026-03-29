@@ -12,7 +12,7 @@ export function useAuth() {
         try {
           // Get the ID token and send to FastAPI to get/create role
           const token = await firebaseUser.getIdToken();
-          const res = await fetch('http://localhost:8000/auth/verify-role', {
+          const res = await fetch('https://scaler-bus-app.onrender.com/auth/verify-role', {
             method: 'POST',
             headers: { Authorization: `Bearer ${token}` },
           });
