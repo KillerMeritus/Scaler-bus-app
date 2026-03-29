@@ -17,7 +17,9 @@ COLLEGE_DOMAIN = os.getenv("COLLEGE_EMAIL_DOMAIN")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "https://scaler-bus-prod.web.app"],
+    allow_origins=[
+    "http://localhost:5173",
+    "https://scaler-bus-app-821d9.web.app"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
