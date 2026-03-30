@@ -11,6 +11,8 @@ export default function DriverApp() {
   const [lastUpdate, setLastUpdate] = useState(null);
   const gpsInterval = useRef(null);
   const [route, setRoute] = useState('H1_H2');
+  const [showDelayForm, setShowDelayForm] = useState(false);
+  const [delayReason, setDelayReason] = useState('');
 
   useEffect(() => {
     const statusRef = ref(db, `buses/${busId}/status`);
@@ -101,6 +103,17 @@ export default function DriverApp() {
     await set(ref(db, `buses/${busId}/status`), newStatus);
   };
 
+  const reportDelay = async () => {
+    if (!delayReason.trim()) return;
+    await set(ref(db, `buses/${busId}/status`), 'delayed');
+    await set(ref(db, `buses/${busId}/delay`), {
+      reason: delayReason.trim(),
+      reportedAt: Date.now(),
+    });
+    setDelayReason('');
+    setShowDelayForm(false);
+  };
+
   if (loading) return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
 
   return (
@@ -154,6 +167,42 @@ export default function DriverApp() {
           ))}
         </div>
         {isRunning && <p className="text-xs text-slate-400 mt-2 text-center">Stop the bus to change route</p>}
+      </div>
+
+      <div className="mt-4">
+        {!showDelayForm ? (
+          <button
+            onClick={() => setShowDelayForm(true)}
+            className="w-full py-3 border border-amber-400 text-amber-600 rounded-xl text-sm font-medium hover:bg-amber-50"
+          >
+            Report delay
+          </button>
+        ) : (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+            <p className="text-sm font-medium text-amber-800 mb-2">Reason for delay</p>
+            <input
+              value={delayReason}
+              onChange={e => setDelayReason(e.target.value)}
+              maxLength={120}
+              placeholder="e.g. Traffic jam at main road..."
+              className="w-full border border-amber-300 rounded-lg px-3 py-2 text-sm mb-3 bg-white"
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={reportDelay}
+                className="flex-1 bg-amber-500 text-white rounded-lg py-2 text-sm font-medium"
+              >
+                Send
+              </button>
+              <button
+                onClick={() => setShowDelayForm(false)}
+                className="flex-1 bg-white border border-slate-200 rounded-lg py-2 text-sm"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
