@@ -2,6 +2,7 @@ import { useState, useEffect, lazy, Suspense } from 'react';
 import { ref, onValue } from 'firebase/database';
 import { db, auth } from '../firebase/config';
 import { signOut } from 'firebase/auth';
+import { useNotifications } from '../hooks/useNotifications';
 
 // Lazy-load the map so the rest of the app loads fast
 const BusMap = lazy(() => import('../components/BusMap'));
@@ -12,6 +13,8 @@ const ROUTE_LABELS = {
 };
 
 export default function StudentApp() {
+  useNotifications();
+
   const [buses, setBuses] = useState({});
   const [selectedBusId, setSelectedBusId] = useState(null);
 
