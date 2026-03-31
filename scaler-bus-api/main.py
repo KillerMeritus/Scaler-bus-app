@@ -175,9 +175,10 @@ async def verify_role(authorization: str = Header(...)):
     uid = decoded["uid"]
     email = decoded.get("email", "")
 
-    if not email.endswith(f"@{COLLEGE_DOMAIN}"):
-        raise HTTPException(status_code=403, detail="Only college email addresses allowed")
-
+    # ------------- TEMPORARILY DISABLED -------------
+    # if not email.endswith(f"@{COLLEGE_DOMAIN}"):
+    #     raise HTTPException(status_code=403, detail="Only college email addresses allowed")
+    # ------------------------------------------------
     user_ref = db.collection("users").document(uid)
     user_doc = user_ref.get()
 
