@@ -1,8 +1,22 @@
 import { useState, useEffect, lazy, Suspense } from 'react';
 import { ref, onValue } from 'firebase/database';
-import { db, auth } from '../firebase/config';
+import { collection, getDocs } from 'firebase/firestore';
+import { db, firestore, auth } from '../firebase/config';
 import { signOut } from 'firebase/auth';
 import { useNotifications } from '../hooks/useNotifications';
+
+// Haversine formula to calculate straight-line distance in km
+function getDistanceFromLatLonInKm(lat1, lon1, lat2, lon2) {
+  const R = 6371; 
+  const dLat = (lat2 - lat1) * (Math.PI / 180);
+  const dLon = (lon2 - lon1) * (Math.PI / 180);
+  const a = 
+    Math.sin(dLat/2) * Math.sin(dLat/2) +
+    Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) * 
+    Math.sin(dLon/2) * Math.sin(dLon/2); 
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
+  return R * c; 
+}
 
 // Lazy-load the map so the rest of the app loads fast
 const BusMap = lazy(() => import('../components/BusMap'));
@@ -17,6 +31,24 @@ export default function StudentApp() {
 
   const [buses, setBuses] = useState({});
   const [selectedBusId, setSelectedBusId] = useState(null);
+  
+  const [routes, setRoutes] = useState({});
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    // Fetch static routes for ETA math
+    const fetchRoutes = async () => {
+      const snap = await getDocs(collection(firestore, 'routes'));
+      const routesObj = {};
+      snap.docs.forEach(d => { routesObj[d.id] = d.data(); });
+      setRoutes(routesObj);
+    };
+    fetchRoutes();
+
+    // 1-second ticker to update 'timeSinceUpdate' live on screen
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     const busesRef = ref(db, 'buses');
@@ -29,15 +61,44 @@ export default function StudentApp() {
       }
     });
     return unsubscribe;
-  }, []);
+  }, [selectedBusId]);
 
   const bus = selectedBusId ? buses[selectedBusId] : null;
   const isRunning = bus?.status === 'running';
   const isDelayed = bus?.status === 'delayed';
   const location = bus?.location;
-  const timeSinceUpdate = location
-    ? Math.floor((Date.now() - location.updatedAt) / 1000)
-    : null;
+  
+  const timeSinceUpdate = location ? Math.floor((now - location.updatedAt) / 1000) : null;
+  const isStale = isRunning && timeSinceUpdate !== null && timeSinceUpdate > 45; // State 6
+
+  // Mathematical ETA State Logic!
+  let activeRouteData = bus?.route ? routes[bus.route] : null;
+  let nextStop = null;
+  let MathETA = null;
+  let etaMessage = null;
+  let isStoppedLong = false;
+
+  if (isRunning && location && activeRouteData && activeRouteData.stops?.length > 0) {
+     nextStop = activeRouteData.stops[activeRouteData.stops.length - 1]; // Use final destination
+     
+     const straightKm = getDistanceFromLatLonInKm(location.lat, location.lng, nextStop.lat, nextStop.lng);
+     const correction = activeRouteData.correction_factor || 1.3;
+     const roadKm = straightKm * correction;
+     const speedKmH = location.speed || 0;
+     
+     if (speedKmH > 2) {
+       // Moving normally
+       const hours = roadKm / speedKmH;
+       MathETA = Math.ceil(hours * 60);
+     } else {
+       // Stopped at signal or traffic
+       if (timeSinceUpdate > 60) {
+         isStoppedLong = true; // State 4
+       } else {
+         etaMessage = "Bus has stopped. ETA will update when moving."; // State 3
+       }
+     }
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 max-w-sm mx-auto">
@@ -80,38 +141,115 @@ export default function StudentApp() {
           {bus?.route && isRunning && ` · ${ROUTE_LABELS[bus.route] || bus.route}`}
         </div>
 
-        {/* Live map */}
-        {isRunning ? (
-          <Suspense fallback={<div className="h-64 bg-slate-100 rounded-2xl flex items-center justify-center text-slate-400">Loading map...</div>}>
-            <BusMap location={location} busName={bus?.name} />
-          </Suspense>
-        ) : (
-          <div className="h-64 bg-slate-100 rounded-2xl flex items-center justify-center text-slate-400 text-sm">
-            Map visible when bus is running
+        {/* State 1: Not started */
+        !isRunning && !isDelayed && (
+          <div className="bg-white border border-slate-200 rounded-xl p-5 mb-4 shadow-sm">
+            <h3 className="font-semibold text-slate-800 mb-2">Not started yet</h3>
+            {activeRouteData ? (
+               <div className="text-sm text-slate-600">
+                 <p className="mb-3"><strong>Route:</strong> {activeRouteData.name}</p>
+                 <div className="space-y-2 border-t pt-2 border-slate-100">
+                   {activeRouteData.stops.map((s, i) => (
+                     <div key={i} className="flex justify-between items-center">
+                       <span className="flex items-center gap-2">
+                         <span className="w-1.5 h-1.5 rounded-full bg-slate-300"></span>
+                         {s.name}
+                       </span>
+                       <span className="font-medium text-slate-800 bg-slate-50 px-2 py-0.5 rounded">{s.scheduledTime}</span>
+                     </div>
+                   ))}
+                 </div>
+               </div>
+            ) : (
+               <p className="text-sm text-slate-500">Scheduled route information will appear here once selected.</p>
+            )}
           </div>
         )}
 
-        {/* Stale data warning */}
-        {isRunning && timeSinceUpdate !== null && timeSinceUpdate > 30 && (
-          <div className="bg-amber-50 border border-amber-200 text-amber-700 text-sm px-4 py-2 rounded-xl">
-            ⚠️ Location not updated for {timeSinceUpdate}s — driver may have lost connection
+        {/* State 5: Delayed */
+        isDelayed && (
+          <div className="bg-red-50 border border-red-200 rounded-xl p-5 mb-4 shadow-sm">
+            <h3 className="font-semibold text-red-700 flex items-center gap-2 mb-3">
+              <span className="text-xl">⚠️</span> Delay Reported
+            </h3>
+            <p className="text-sm text-red-900 bg-white/60 p-3 rounded-lg border border-red-100 font-medium">
+              "{bus?.delay?.reason || "Running late due to unexpected conditions."}"
+            </p>
+            <p className="text-xs text-red-600 mt-3 flex items-center gap-1.5">
+               <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse"></span>
+               All students have been notified via push notification.
+            </p>
           </div>
         )}
 
-        {/* Speed info */}
-        {isRunning && location && (
-          <div className="grid grid-cols-2 gap-3">
-            <div className="bg-white border border-slate-100 rounded-xl p-4">
-              <p className="text-xs text-slate-400 mb-1">Speed</p>
-              <p className="text-lg font-semibold text-slate-800">{location.speed || 0} km/h</p>
-            </div>
-            <div className="bg-white border border-slate-100 rounded-xl p-4">
-              <p className="text-xs text-slate-400 mb-1">Last updated</p>
-              <p className="text-lg font-semibold text-slate-800">
-                {timeSinceUpdate !== null ? `${timeSinceUpdate}s ago` : '—'}
-              </p>
-            </div>
+        {/* Live map (States 2, 3, 4, 6) */}
+        {isRunning && (
+          <div className="rounded-2xl overflow-hidden border border-slate-200 shadow-sm relative z-0">
+            <Suspense fallback={<div className="h-64 bg-slate-100 flex items-center justify-center text-slate-400">Loading map...</div>}>
+              <BusMap location={location} busName={bus?.name} />
+            </Suspense>
           </div>
+        )}
+
+        {/* Dynamic ETA & Status Card (States 2, 3, 4, 6) */}
+        {isRunning && (
+            <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-4 relative z-10 -mt-2">
+               {/* Destination Info */}
+               {nextStop && (
+                  <div className="flex justify-between items-start pb-4 border-b border-slate-100">
+                    <div>
+                      <p className="text-xs text-slate-400 mb-0.5 font-medium uppercase tracking-wider">Destination</p>
+                      <p className="font-semibold text-slate-800 text-lg">{nextStop.name}</p>
+                    </div>
+                    
+                    {/* State 6: Stale Data */
+                    isStale && (
+                       <div className="bg-amber-50 text-amber-700 px-3 py-2 rounded-lg text-xs font-medium border border-amber-200 text-right">
+                          <p className="text-sm shadow-sm">⚠️ GPS Stalled</p>
+                          <p className="opacity-80 mt-0.5">for {timeSinceUpdate}s</p>
+                       </div>
+                    )}
+                    
+                    {/* State 4: Stopped too long */
+                    !isStale && isStoppedLong && (
+                       <div className="bg-orange-50 text-orange-700 px-3 py-2 rounded-lg text-xs font-medium border border-orange-200 text-right w-1/2">
+                          <span className="block mb-1">⚠️ Bus is stationary</span>
+                          <span className="opacity-80">Waiting for driver update</span>
+                       </div>
+                    )}
+
+                    {/* State 2: Normal ETA */
+                    !isStale && !isStoppedLong && MathETA !== null && (
+                      <div className="bg-blue-50 text-blue-800 px-4 py-2 rounded-xl border border-blue-100 flex items-baseline gap-1">
+                         <span className="font-bold text-2xl tracking-tight">~{MathETA}</span>
+                         <span className="text-xs font-semibold uppercase">min</span>
+                      </div>
+                    )}
+                  </div>
+               )}
+
+               {/* State 3 message */
+               !isStale && !isStoppedLong && etaMessage && (
+                  <div className="bg-slate-50 text-slate-600 text-xs px-3 py-2.5 rounded-lg border border-slate-200 font-medium">
+                    {etaMessage}
+                  </div>
+               )}
+
+               {/* Telemetry Footer */}
+               {location && (
+                  <div className="flex justify-between items-center pt-1">
+                    <div className="flex items-center gap-2">
+                       <div className="bg-slate-100 px-2.5 py-1 rounded text-xs font-semibold text-slate-600 tracking-wide border border-slate-200">
+                         {location.speed || 0} km/h
+                       </div>
+                       {location.speed === 0 && <span className="text-xs text-amber-600 font-medium px-2 bg-amber-50 rounded py-1">🟡 Stopped</span>}
+                    </div>
+                    <div className="text-xs text-slate-400 font-medium">
+                       Updated: {timeSinceUpdate !== null ? `${timeSinceUpdate}s ago` : '—'}
+                    </div>
+                  </div>
+               )}
+            </div>
         )}
       </div>
     </div>
