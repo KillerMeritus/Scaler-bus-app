@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { collection, getDocs, doc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
-import { firestore, auth } from '../firebase/config';
+import { ref, update as rtdbUpdate } from 'firebase/database';
+import { firestore, auth, db } from '../firebase/config';
 import { signOut } from 'firebase/auth';
 
 // Haversine formula to calculate straight-line distance in km
@@ -36,23 +37,37 @@ export default function AdminPanel() {
   }, [tab]);
 
   const loadData = async () => {
-    if (tab === 'buses') {
-      const snap = await getDocs(collection(firestore, 'buses'));
-      setBuses(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    }
-    if (tab === 'users') {
-      const snap = await getDocs(collection(firestore, 'users'));
-      setUsers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    }
-    if (tab === 'routes') {
-      const snap = await getDocs(collection(firestore, 'routes'));
-      setRoutes(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    }
+    // Load all data cross-referencing so dropdowns work in Buses tab
+    const [busesSnap, usersSnap, routesSnap] = await Promise.all([
+      getDocs(collection(firestore, 'buses')),
+      getDocs(collection(firestore, 'users')),
+      getDocs(collection(firestore, 'routes'))
+    ]);
+    setBuses(busesSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+    setUsers(usersSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+    setRoutes(routesSnap.docs.map(d => ({ id: d.id, ...d.data() })));
   };
 
   const updateUserRole = async (uid, role) => {
     await updateDoc(doc(firestore, 'users', uid), { role });
     loadData();
+  };
+
+  const assignBus = async (busId, updates) => {
+    try {
+      // 1. Optimistic UI update so the dropdown feels instant
+      setBuses(prev => prev.map(b => b.id === busId ? { ...b, ...updates } : b));
+      
+      // 2. Update Firestore
+      await updateDoc(doc(firestore, 'buses', busId), updates);
+      
+      // 3. Mirror to RTDB so Driver and Student apps immediately pick it up
+      await rtdbUpdate(ref(db, `buses/${busId}`), updates);
+    } catch (e) {
+      console.error("Assignment error:", e);
+      alert("Error saving assignment: " + e.message);
+      loadData(); // Revert on failure
+    }
   };
 
   const addBus = async () => {
@@ -149,14 +164,47 @@ export default function AdminPanel() {
             </button>
             {buses.map(bus => (
               <div key={bus.id} className="bg-white border border-slate-200 rounded-xl p-4 mb-3">
-                <div className="flex justify-between items-center">
-                  <p className="font-medium text-slate-800">{bus.name}</p>
+                <div className="flex justify-between items-center mb-3">
+                  <div>
+                    <p className="font-medium text-slate-800">{bus.name}</p>
+                    <p className="text-xs text-slate-400 mt-0.5">ID: {bus.id}</p>
+                  </div>
                   <span className={`text-xs px-2 py-1 rounded-full ${bus.isActive ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
                     {bus.isActive ? 'Active' : 'Inactive'}
                   </span>
                 </div>
-                <p className="text-xs text-slate-400 mt-1">ID: {bus.id}</p>
-                <p className="text-xs text-slate-400">Driver UID: {bus.driverUid || 'Not assigned'}</p>
+                
+                <div className="grid grid-cols-2 gap-3 mt-2 pt-3 border-t border-slate-100">
+                  {/* Driver Assignment Dropdown */}
+                  <div>
+                    <label className="text-xs text-slate-500 block mb-1">Assigned Driver</label>
+                    <select 
+                       className="w-full text-sm border border-slate-200 rounded-lg p-1.5 bg-slate-50 focus:ring-blue-500 focus:border-blue-500"
+                       value={bus.driverUid || ''}
+                       onChange={(e) => assignBus(bus.id, { driverUid: e.target.value })}
+                    >
+                       <option value="">-- Unassigned --</option>
+                       {users.filter(u => u.role === 'driver').map(d => (
+                         <option key={d.id} value={d.id}>{d.displayName || d.email}</option>
+                       ))}
+                    </select>
+                  </div>
+
+                  {/* Route Assignment Dropdown */}
+                  <div>
+                    <label className="text-xs text-slate-500 block mb-1">Active Route</label>
+                    <select 
+                       className="w-full text-sm border border-slate-200 rounded-lg p-1.5 bg-slate-50 focus:ring-blue-500 focus:border-blue-500"
+                       value={bus.route || ''}
+                       onChange={(e) => assignBus(bus.id, { route: e.target.value })}
+                    >
+                       <option value="">-- Unassigned --</option>
+                       {routes.map(r => (
+                         <option key={r.id} value={r.id}>{r.name}</option>
+                       ))}
+                    </select>
+                  </div>
+                </div>
               </div>
             ))}
           </>
