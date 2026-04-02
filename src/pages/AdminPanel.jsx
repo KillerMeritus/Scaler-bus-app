@@ -55,22 +55,29 @@ export default function AdminPanel() {
 
   const assignBus = async (busId, updates) => {
     try {
-      // 1. Optimistic UI update so the dropdown feels instant
+      // 1. Optimistic UI update
       setBuses(prev => prev.map(b => b.id === busId ? { ...b, ...updates } : b));
       
       // 2. Update Firestore
-      await updateDoc(doc(firestore, 'buses', busId), updates);
+      try {
+        await updateDoc(doc(firestore, 'buses', busId), updates);
+      } catch (e) {
+        throw new Error("FIRESTORE_ERROR: " + e.message);
+      }
       
-      // 3. Mirror to RTDB so Driver and Student apps immediately pick it up
-      // Use set() instead of update() to match DriverApp which works perfectly and avoids strict rule conflicts
-      const promises = Object.entries(updates).map(([key, val]) => {
-         return set(ref(db, `buses/${busId}/${key}`), val);
-      });
-      await Promise.all(promises);
+      // 3. Mirror to RTDB
+      try {
+        const promises = Object.entries(updates).map(([key, val]) => {
+           return set(ref(db, `buses/${busId}/${key}`), val);
+        });
+        await Promise.all(promises);
+      } catch (e) {
+        throw new Error("REALTIME_DB_ERROR: " + e.message);
+      }
       
     } catch (e) {
       console.error("Assignment error:", e);
-      alert("Error saving assignment: " + e.message);
+      alert(e.message + "\n\nPlease check your Firebase Security Rules!");
       loadData(); // Revert on failure
     }
   };
