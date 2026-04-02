@@ -3,11 +3,33 @@ import { collection, getDocs, doc, setDoc, updateDoc, deleteDoc } from 'firebase
 import { firestore, auth } from '../firebase/config';
 import { signOut } from 'firebase/auth';
 
+// Haversine formula to calculate straight-line distance in km
+function getDistanceFromLatLonInKm(lat1, lon1, lat2, lon2) {
+  const R = 6371; // Radius of the earth in km
+  const dLat = (lat2 - lat1) * (Math.PI / 180);
+  const dLon = (lon2 - lon1) * (Math.PI / 180);
+  const a = 
+    Math.sin(dLat/2) * Math.sin(dLat/2) +
+    Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) * 
+    Math.sin(dLon/2) * Math.sin(dLon/2); 
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
+  return R * c; // Distance in km
+}
+
 export default function AdminPanel() {
   const [tab, setTab] = useState('buses'); // 'buses' | 'routes' | 'users'
   const [buses, setBuses] = useState([]);
   const [users, setUsers] = useState([]);
   const [routes, setRoutes] = useState([]);
+
+  // Route Form State
+  const [showRouteForm, setShowRouteForm] = useState(false);
+  const [calculating, setCalculating] = useState(false);
+  const [routeForm, setRouteForm] = useState({
+    id: '', name: '',
+    stop1Name: '', stop1Lat: '', stop1Lng: '', stop1Time: '',
+    stop2Name: '', stop2Lat: '', stop2Lng: '', stop2Time: '',
+  });
 
   useEffect(() => {
     loadData();
@@ -39,6 +61,64 @@ export default function AdminPanel() {
     const id = 'bus_' + Date.now();
     await setDoc(doc(firestore, 'buses', id), {
       name, isActive: true, defaultRoute: 'H1_H2', driverUid: ''
+    });
+    loadData();
+  };
+
+  const handleSaveRoute = async () => {
+    if (!routeForm.id || !routeForm.stop1Lat || !routeForm.stop2Lat) return alert("Fill required fields");
+    setCalculating(true);
+    
+    // 1. Calculate straight line distance
+    const straightLineKm = getDistanceFromLatLonInKm(
+      Number(routeForm.stop1Lat), Number(routeForm.stop1Lng),
+      Number(routeForm.stop2Lat), Number(routeForm.stop2Lng)
+    );
+    
+    let correction_factor = 1.3; // Default safe fallback
+    
+    // 2. Fetch Mapbox Directions API for road distance
+    const token = import.meta.env.VITE_MAPBOX_TOKEN;
+    if (token) {
+      const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${routeForm.stop1Lng},${routeForm.stop1Lat};${routeForm.stop2Lng},${routeForm.stop2Lat}?access_token=${token}`;
+      try {
+        const res = await fetch(url);
+        if (res.ok) {
+          const data = await res.json();
+          const realRoadMeters = data.routes[0].distance;
+          const realRoadKm = realRoadMeters / 1000;
+          
+          // 3. Calculate dynamic Correction Factor!
+          correction_factor = realRoadKm / straightLineKm;
+        } else {
+          alert("Mapbox API request failed. Using fallback correction factor.");
+        }
+      } catch (e) {
+        console.error("Mapbox Route Error", e);
+        alert("Network error. Using fallback correction factor.");
+      }
+    } else {
+      alert("Warning: VITE_MAPBOX_TOKEN not found in .env. Using fallback correction factor of 1.3.");
+    }
+    
+    // Save to Firestore with calculated factor
+    const stops = [
+      { name: routeForm.stop1Name, lat: Number(routeForm.stop1Lat), lng: Number(routeForm.stop1Lng), scheduledTime: routeForm.stop1Time },
+      { name: routeForm.stop2Name, lat: Number(routeForm.stop2Lat), lng: Number(routeForm.stop2Lng), scheduledTime: routeForm.stop2Time }
+    ];
+    
+    await setDoc(doc(firestore, 'routes', routeForm.id), {
+      name: routeForm.name,
+      stops: stops,
+      correction_factor
+    });
+    
+    setCalculating(false);
+    setShowRouteForm(false);
+    setRouteForm({
+      id: '', name: '',
+      stop1Name: '', stop1Lat: '', stop1Lng: '', stop1Time: '',
+      stop2Name: '', stop2Lat: '', stop2Lng: '', stop2Time: '',
     });
     loadData();
   };
@@ -107,15 +187,58 @@ export default function AdminPanel() {
         {/* ROUTES TAB */}
         {tab === 'routes' && (
           <div className="space-y-3">
+            {!showRouteForm ? (
+              <button onClick={() => setShowRouteForm(true)} className="w-full py-3 border-2 border-dashed border-slate-300 text-slate-500 rounded-xl text-sm mb-4 hover:bg-white text-center transition">
+                + Create new route & calculate ETA factor
+              </button>
+            ) : (
+              <div className="bg-white border border-slate-200 rounded-xl p-4 mb-4 text-sm mt-2 shadow-sm">
+                <h3 className="font-semibold text-slate-800 mb-3 text-base">New Route & CTA Configurator</h3>
+                <input placeholder="Route ID (e.g. H1_H2)" value={routeForm.id} onChange={e => setRouteForm({...routeForm, id: e.target.value})} className="w-full border border-slate-300 p-2 rounded-lg mb-2" />
+                <input placeholder="Route Name (e.g. Hostel 1 → Hostel 2)" value={routeForm.name} onChange={e => setRouteForm({...routeForm, name: e.target.value})} className="w-full border border-slate-300 p-2 rounded-lg mb-4" />
+                
+                <div className="bg-slate-50 p-3 rounded-lg border border-slate-100 mb-3">
+                  <p className="font-medium text-slate-700 mb-2">Stop 1 (Departure)</p>
+                  <div className="grid grid-cols-2 gap-2 mb-2">
+                    <input placeholder="Stop Name" value={routeForm.stop1Name} onChange={e => setRouteForm({...routeForm, stop1Name: e.target.value})} className="w-full border p-2 rounded-md" />
+                    <input placeholder="Ex: 07:30" value={routeForm.stop1Time} onChange={e => setRouteForm({...routeForm, stop1Time: e.target.value})} className="w-full border p-2 rounded-md" />
+                    <input placeholder="Latitude" type="number" value={routeForm.stop1Lat} onChange={e => setRouteForm({...routeForm, stop1Lat: e.target.value})} className="w-full border p-2 rounded-md" />
+                    <input placeholder="Longitude" type="number" value={routeForm.stop1Lng} onChange={e => setRouteForm({...routeForm, stop1Lng: e.target.value})} className="w-full border p-2 rounded-md" />
+                  </div>
+                </div>
+                
+                <div className="bg-slate-50 p-3 rounded-lg border border-slate-100 mb-4">
+                  <p className="font-medium text-slate-700 mb-2">Stop 2 (Destination)</p>
+                  <div className="grid grid-cols-2 gap-2 mb-2">
+                    <input placeholder="Stop Name" value={routeForm.stop2Name} onChange={e => setRouteForm({...routeForm, stop2Name: e.target.value})} className="w-full border p-2 rounded-md" />
+                    <input placeholder="Ex: 08:00" value={routeForm.stop2Time} onChange={e => setRouteForm({...routeForm, stop2Time: e.target.value})} className="w-full border p-2 rounded-md" />
+                    <input placeholder="Latitude" type="number" value={routeForm.stop2Lat} onChange={e => setRouteForm({...routeForm, stop2Lat: e.target.value})} className="w-full border p-2 rounded-md" />
+                    <input placeholder="Longitude" type="number" value={routeForm.stop2Lng} onChange={e => setRouteForm({...routeForm, stop2Lng: e.target.value})} className="w-full border p-2 rounded-md" />
+                  </div>
+                </div>
+
+                <div className="flex gap-2">
+                  <button onClick={handleSaveRoute} disabled={calculating} className={`flex-1 bg-blue-600 text-white rounded-lg py-2.5 font-medium transition ${calculating ? 'opacity-70' : 'hover:bg-blue-700'}`}>
+                    {calculating ? 'Calculating Mapbox API...' : 'Save & Calculate'}
+                  </button>
+                  <button onClick={() => setShowRouteForm(false)} className="flex-1 bg-white border border-slate-200 text-slate-600 rounded-lg py-2.5 hover:bg-slate-50 transition">
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
             {routes.map(route => (
               <div key={route.id} className="bg-white border border-slate-200 rounded-xl p-4">
-                <p className="font-medium">{route.name}</p>
-                <p className="text-xs text-slate-400">{route.stops?.length || 0} stops</p>
+                <p className="font-medium text-slate-800">{route.name}</p>
+                <p className="text-xs text-slate-400 mb-2.5">{route.stops?.length || 0} stops recorded</p>
+                {route.correction_factor && (
+                   <div className="bg-emerald-50 text-emerald-700 border border-emerald-100 text-xs px-2.5 py-1.5 rounded-lg inline-flex font-medium">
+                     Mapbox Correction Factor: {route.correction_factor.toFixed(2)}x
+                   </div>
+                )}
               </div>
             ))}
-            <p className="text-xs text-slate-400 text-center pt-2">
-              Add routes directly in Firestore for now. Full route editor in Phase 4.
-            </p>
           </div>
         )}
       </div>
