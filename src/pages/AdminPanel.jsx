@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { collection, getDocs, doc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
-import { ref, update as rtdbUpdate } from 'firebase/database';
+import { ref, set } from 'firebase/database';
 import { firestore, auth, db } from '../firebase/config';
 import { signOut } from 'firebase/auth';
 
@@ -62,7 +62,12 @@ export default function AdminPanel() {
       await updateDoc(doc(firestore, 'buses', busId), updates);
       
       // 3. Mirror to RTDB so Driver and Student apps immediately pick it up
-      await rtdbUpdate(ref(db, `buses/${busId}`), updates);
+      // Use set() instead of update() to match DriverApp which works perfectly and avoids strict rule conflicts
+      const promises = Object.entries(updates).map(([key, val]) => {
+         return set(ref(db, `buses/${busId}/${key}`), val);
+      });
+      await Promise.all(promises);
+      
     } catch (e) {
       console.error("Assignment error:", e);
       alert("Error saving assignment: " + e.message);
@@ -196,7 +201,14 @@ export default function AdminPanel() {
                     <select 
                        className="w-full text-sm border border-slate-200 rounded-lg p-1.5 bg-slate-50 focus:ring-blue-500 focus:border-blue-500"
                        value={bus.route || ''}
-                       onChange={(e) => assignBus(bus.id, { route: e.target.value })}
+                       onChange={(e) => {
+                         const routeId = e.target.value;
+                         const selectedRoute = routes.find(r => r.id === routeId);
+                         assignBus(bus.id, { 
+                           route: routeId,
+                           routeName: selectedRoute ? selectedRoute.name : ''
+                         });
+                       }}
                     >
                        <option value="">-- Unassigned --</option>
                        {routes.map(r => (

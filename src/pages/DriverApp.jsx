@@ -5,24 +5,38 @@ import { signOut } from 'firebase/auth';
 
 export default function DriverApp() {
   const [isRunning, setIsRunning] = useState(false);
-  const [busId] = useState('bus_01');
+  const [assignedBus, setAssignedBus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [gpsStatus, setGpsStatus] = useState('idle'); // 'idle' | 'active' | 'error'
   const [lastUpdate, setLastUpdate] = useState(null);
   const gpsInterval = useRef(null);
-  const [route, setRoute] = useState('H1_H2');
   const [showDelayForm, setShowDelayForm] = useState(false);
   const [delayReason, setDelayReason] = useState('');
 
+  // Find the bus assigned to this driver by the admin
   useEffect(() => {
-    const statusRef = ref(db, `buses/${busId}/status`);
-    const unsubscribe = onValue(statusRef, (snap) => {
-      const status = snap.val();
-      setIsRunning(status === 'running');
+    const busesRef = ref(db, 'buses');
+    const unsubscribe = onValue(busesRef, (snap) => {
+      const allBuses = snap.val() || {};
+      const uid = auth.currentUser?.uid;
+      
+      const myBusEntries = Object.entries(allBuses).filter(([id, bus]) => bus.driverUid === uid);
+      
+      // Prefer newly created buses over the legacy hardcoded 'bus_01'
+      let myBusEntry = myBusEntries.find(([id]) => id !== 'bus_01');
+      if (!myBusEntry && myBusEntries.length > 0) myBusEntry = myBusEntries[0];
+      
+      if (myBusEntry) {
+        setAssignedBus({ id: myBusEntry[0], ...myBusEntry[1] });
+        setIsRunning(myBusEntry[1].status === 'running');
+      } else {
+        setAssignedBus(null);
+        setIsRunning(false);
+      }
       setLoading(false);
     });
     return unsubscribe;
-  }, [busId]);
+  }, []);
 
   // Start or stop GPS based on running status
   useEffect(() => {
@@ -48,6 +62,7 @@ export default function DriverApp() {
   }, [isRunning]);
 
   const writeLocation = () => {
+    if (!assignedBus?.id) return;
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         const payload = {
@@ -57,7 +72,7 @@ export default function DriverApp() {
           heading: pos.coords.heading || 0,
           updatedAt: Date.now(),
         };
-        set(ref(db, `buses/${busId}/location`), payload);
+        set(ref(db, `buses/${assignedBus.id}/location`), payload);
         setGpsStatus('active');
         setLastUpdate(new Date().toLocaleTimeString());
       },
@@ -83,30 +98,20 @@ export default function DriverApp() {
     setGpsStatus('idle');
   };
 
-  useEffect(() => {
-    const routeRef = ref(db, `buses/${busId}/route`);
-    const unsub = onValue(routeRef, (snap) => {
-      if (snap.val()) setRoute(snap.val());
-    });
-    return unsub;
-  }, [busId]);
-
-  const selectRoute = async (routeId) => {
-    if (isRunning) return; // cannot change route while running
-    setRoute(routeId);
-    await set(ref(db, `buses/${busId}/route`), routeId);
-  };
-
   const toggleStatus = async () => {
+    if (!assignedBus?.id) return;
     const newStatus = isRunning ? 'stopped' : 'running';
-    await set(ref(db, `buses/${busId}/driverUid`), auth.currentUser.uid);
-    await set(ref(db, `buses/${busId}/status`), newStatus);
+    await set(ref(db, `buses/${assignedBus.id}/status`), newStatus);
+    if (newStatus === 'stopped') {
+      await set(ref(db, `buses/${assignedBus.id}/delay`), null);
+    }
   };
 
   const reportDelay = async () => {
-    if (!delayReason.trim()) return;
-    await set(ref(db, `buses/${busId}/status`), 'delayed');
-    await set(ref(db, `buses/${busId}/delay`), {
+    if (!assignedBus?.id || !delayReason.trim()) return;
+    // We only set the delay object, we DO NOT change the status to 'delayed'
+    // This allows the GPS coordinates to keep updating in the background!
+    await set(ref(db, `buses/${assignedBus.id}/delay`), {
       reason: delayReason.trim(),
       reportedAt: Date.now(),
     });
@@ -116,10 +121,26 @@ export default function DriverApp() {
 
   if (loading) return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
 
+  if (!assignedBus) {
+    return (
+      <div className="min-h-screen bg-slate-50 p-6 flex flex-col items-center justify-center text-center max-w-sm mx-auto">
+        <div className="w-16 h-16 bg-slate-200 rounded-full flex items-center justify-center text-4xl mb-4 pt-1">🚏</div>
+        <h2 className="text-xl font-bold text-slate-800 mb-2">No Bus Assigned</h2>
+        <p className="text-slate-500 mb-6 font-medium">You have not been assigned to a bus yet. Please contact the administrator.</p>
+        <button onClick={() => signOut(auth)} className="text-sm font-bold text-slate-600 bg-white border border-slate-200 px-6 py-2.5 rounded-xl hover:bg-slate-50">Sign out</button>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 p-6 max-w-sm mx-auto">
       <div className="flex justify-between items-center mb-8">
-        <h1 className="text-xl font-semibold">Driver Panel</h1>
+        <div>
+          <h1 className="text-xl font-semibold">Driver Panel</h1>
+          <p className="text-xs font-medium text-blue-600 bg-blue-50 px-2 py-1 rounded inline-block mt-1">
+            Driving: {assignedBus.name}
+          </p>
+        </div>
         <button onClick={() => signOut(auth)} className="text-sm text-slate-400">Sign out</button>
       </div>
 
@@ -145,28 +166,10 @@ export default function DriverApp() {
         </div>
       )}
 
-      <div className="mt-6">
-        <p className="text-sm font-medium text-slate-500 mb-3">Today's route</p>
-        <div className="grid grid-cols-2 gap-3">
-          {[
-            { id: 'H1_H2', label: 'Hostel 1 → 2' },
-            { id: 'H2_H1', label: 'Hostel 2 → 1' },
-          ].map(({ id, label }) => (
-            <button
-              key={id}
-              onClick={() => selectRoute(id)}
-              disabled={isRunning}
-              className={`py-3 rounded-xl text-sm font-medium border transition ${
-                route === id
-                  ? 'bg-blue-600 text-white border-blue-600'
-                  : 'bg-white text-slate-600 border-slate-200'
-              } ${isRunning ? 'opacity-50 cursor-not-allowed' : ''}`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        {isRunning && <p className="text-xs text-slate-400 mt-2 text-center">Stop the bus to change route</p>}
+      <div className="mt-6 bg-white border border-slate-200 p-4 rounded-xl">
+        <p className="text-xs text-slate-400 font-bold uppercase tracking-wider mb-1">Assigned Route</p>
+        <p className="font-semibold text-slate-800 text-lg">{assignedBus.routeName || assignedBus.route || 'No route assigned'}</p>
+        <p className="text-xs text-slate-400 mt-1">This route is locked by the admin.</p>
       </div>
 
       <div className="mt-4">

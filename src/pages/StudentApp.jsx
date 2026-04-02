@@ -65,7 +65,7 @@ export default function StudentApp() {
 
   const bus = selectedBusId ? buses[selectedBusId] : null;
   const isRunning = bus?.status === 'running';
-  const isDelayed = bus?.status === 'delayed';
+  const isDelayed = !!bus?.delay;
   const location = bus?.location;
   
   const timeSinceUpdate = location ? Math.floor((now - location.updatedAt) / 1000) : null;
@@ -130,26 +130,26 @@ export default function StudentApp() {
       <div className="p-5 space-y-4">
         {/* Status badge */}
         <div className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium w-fit ${
-          isRunning ? 'bg-green-100 text-green-700' :
           isDelayed ? 'bg-amber-100 text-amber-700' :
+          isRunning ? 'bg-green-100 text-green-700' :
           'bg-slate-100 text-slate-500'
         }`}>
           <span className={`w-2 h-2 rounded-full ${
-            isRunning ? 'bg-green-500' : isDelayed ? 'bg-amber-500' : 'bg-slate-400'
+            isDelayed ? 'bg-amber-500' : isRunning ? 'bg-green-500' : 'bg-slate-400'
           }`} />
-          {isRunning ? 'Running' : isDelayed ? 'Delayed' : 'Not running'}
-          {bus?.route && isRunning && ` · ${ROUTE_LABELS[bus.route] || bus.route}`}
+          {isDelayed ? 'Delayed' : isRunning ? 'Running' : 'Not running'}
+          {!isDelayed && isRunning && activeRouteData && ` · ${activeRouteData.name}`}
         </div>
 
         {/* State 1: Not started */
-        !isRunning && !isDelayed && (
+        !isRunning && (
           <div className="bg-white border border-slate-200 rounded-xl p-5 mb-4 shadow-sm">
             <h3 className="font-semibold text-slate-800 mb-2">Not started yet</h3>
             {activeRouteData ? (
                <div className="text-sm text-slate-600">
                  <p className="mb-3"><strong>Route:</strong> {activeRouteData.name}</p>
                  <div className="space-y-2 border-t pt-2 border-slate-100">
-                   {activeRouteData.stops.map((s, i) => (
+                   {activeRouteData.stops?.map((s, i) => (
                      <div key={i} className="flex justify-between items-center">
                        <span className="flex items-center gap-2">
                          <span className="w-1.5 h-1.5 rounded-full bg-slate-300"></span>
@@ -158,6 +158,9 @@ export default function StudentApp() {
                        <span className="font-medium text-slate-800 bg-slate-50 px-2 py-0.5 rounded">{s.scheduledTime}</span>
                      </div>
                    ))}
+                   {(!activeRouteData.stops || activeRouteData.stops.length === 0) && (
+                      <p className="text-xs text-slate-400 italic">No stops configured for this route.</p>
+                   )}
                  </div>
                </div>
             ) : (
