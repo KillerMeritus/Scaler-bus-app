@@ -13,10 +13,6 @@ import json
 
 load_dotenv()
 
-COLLEGE_DOMAIN = os.getenv("COLLEGE_EMAIL_DOMAIN")
-if not COLLEGE_DOMAIN:
-    raise RuntimeError("COLLEGE_EMAIL_DOMAIN is not set in .env")
-
 RTDB_URL = os.getenv("RTDB_URL")
 CRON_SECRET = os.getenv("CRON_SECRET")
 PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID")
@@ -191,10 +187,6 @@ async def verify_role(authorization: str = Header(...)):
     uid = decoded["uid"]
     email = decoded.get("email", "")
 
-    # ------------- TEMPORARILY DISABLED -------------
-    # if not email.endswith(f"@{COLLEGE_DOMAIN}"):
-    #     raise HTTPException(status_code=403, detail="Only college email addresses allowed")
-    # ------------------------------------------------
     user_ref = db.collection("users").document(uid)
     user_doc = user_ref.get()
 
