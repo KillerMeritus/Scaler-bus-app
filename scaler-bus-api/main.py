@@ -21,16 +21,35 @@ RTDB_URL = os.getenv("RTDB_URL")
 CRON_SECRET = os.getenv("CRON_SECRET")
 PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID")
 
-cred = credentials.Certificate("serviceAccountKey.json")
+cred_json_env = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
+if cred_json_env:
+    # Use environment variable in production
+    cred_dict = json.loads(cred_json_env)
+    cred = credentials.Certificate(cred_dict)
+elif os.path.exists("serviceAccountKey.json"):
+    # Use local file in development
+    cred = credentials.Certificate("serviceAccountKey.json")
+else:
+    raise RuntimeError(
+        "FIREBASE_SERVICE_ACCOUNT_JSON environment variable is missing! "
+        "Please add the contents of your serviceAccountKey.json to the Render Environment Variables tab."
+    )
+
 firebase_admin.initialize_app(cred)
 db = firestore.client()
 
 
 def get_access_token():
-    sa_creds = service_account.Credentials.from_service_account_file(
-        "serviceAccountKey.json",
-        scopes=["https://www.googleapis.com/auth/firebase.messaging"]
-    )
+    if cred_json_env:
+        sa_creds = service_account.Credentials.from_service_account_info(
+            info=json.loads(cred_json_env), 
+            scopes=["https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/firebase.database"]
+        )
+    else:
+        sa_creds = service_account.Credentials.from_service_account_file(
+            "serviceAccountKey.json", 
+            scopes=["https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/firebase.database"]
+        )
     request = google.auth.transport.requests.Request()
     sa_creds.refresh(request)
     return sa_creds.token
