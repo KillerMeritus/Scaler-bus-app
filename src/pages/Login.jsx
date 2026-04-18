@@ -4,9 +4,17 @@ import { auth } from '../firebase/config';
 export default function Login() {
   const handleLogin = async () => {
     const provider = new GoogleAuthProvider();
-    provider.setCustomParameters({ hd: 'sst.scaler.com' }); // properly matching your .env domain
+    provider.setCustomParameters({ prompt: 'select_account' });
     try {
-      await signInWithPopup(auth, provider);
+      const result = await signInWithPopup(auth, provider);
+      
+      // If they don't use a scaler email, sign them right back out!
+      // (This replaces the restrictive 'hd' parameter that auto-login trapped you)
+      // if (!result.user.email.endsWith('@sst.scaler.com')) {
+      //   await auth.signOut();
+      //   alert('Access Denied. You must use an @sst.scaler.com email!');
+      // }
+      
       // onAuthStateChanged in useAuth.js handles the rest
     } catch (err) {
       alert('Login failed: ' + err.message);

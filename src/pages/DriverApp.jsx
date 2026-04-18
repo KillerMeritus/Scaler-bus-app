@@ -2,8 +2,10 @@ import { useState, useEffect, useRef } from 'react';
 import { ref, set, onValue } from 'firebase/database';
 import { auth, db } from '../firebase/config';
 import { signOut } from 'firebase/auth';
+import StudentSchedule from './StudentSchedule';
 
 export default function DriverApp() {
+  const [activeTab, setActiveTab] = useState('panel'); // 'panel' | 'schedule'
   const [isRunning, setIsRunning] = useState(false);
   const [assignedBus, setAssignedBus] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -121,20 +123,21 @@ export default function DriverApp() {
 
   if (loading) return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
 
-  if (!assignedBus) {
-    return (
-      <div className="min-h-screen bg-slate-50 p-6 flex flex-col items-center justify-center text-center max-w-sm mx-auto">
-        <div className="w-16 h-16 bg-slate-200 rounded-full flex items-center justify-center text-4xl mb-4 pt-1">🚏</div>
-        <h2 className="text-xl font-bold text-slate-800 mb-2">No Bus Assigned</h2>
-        <p className="text-slate-500 mb-6 font-medium">You have not been assigned to a bus yet. Please contact the administrator.</p>
-        <button onClick={() => signOut(auth)} className="text-sm font-bold text-slate-600 bg-white border border-slate-200 px-6 py-2.5 rounded-xl hover:bg-slate-50">Sign out</button>
-      </div>
-    );
-  }
+  const renderPanel = () => {
+    if (!assignedBus) {
+      return (
+        <div className="flex-1 flex flex-col items-center justify-center text-center p-6 mt-20">
+          <div className="w-16 h-16 bg-slate-200 rounded-full flex items-center justify-center text-4xl mb-4 pt-1">🚏</div>
+          <h2 className="text-xl font-bold text-slate-800 mb-2">No Bus Assigned</h2>
+          <p className="text-slate-500 mb-6 font-medium">You have not been assigned to a bus yet. Please contact the administrator.</p>
+          <button onClick={() => signOut(auth)} className="text-sm font-bold text-slate-600 bg-white border border-slate-200 px-6 py-2.5 rounded-xl hover:bg-slate-50">Sign out</button>
+        </div>
+      );
+    }
 
-  return (
-    <div className="min-h-screen bg-slate-50 p-6 max-w-sm mx-auto">
-      <div className="flex justify-between items-center mb-8">
+    return (
+      <div className="p-6">
+        <div className="flex justify-between items-center mb-8">
         <div>
           <h1 className="text-xl font-semibold">Driver Panel</h1>
           <p className="text-xs font-medium text-blue-600 bg-blue-50 px-2 py-1 rounded inline-block mt-1">
@@ -206,6 +209,47 @@ export default function DriverApp() {
             </div>
           </div>
         )}
+      </div>
+    </div>
+  );
+};
+
+  return (
+    <div className="min-h-screen bg-slate-50 max-w-sm mx-auto pb-16 flex flex-col">
+      {/* ──── DRIVER PANEL TAB ──── */}
+      {activeTab === 'panel' && renderPanel()}
+
+      {/* ──── SCHEDULE TAB ──── */}
+      {activeTab === 'schedule' && (
+        <>
+          <div className="flex justify-between items-center px-5 py-4 bg-white border-b border-slate-100">
+            <h1 className="text-lg font-semibold text-slate-800">Assigned Schedules</h1>
+            <button onClick={() => signOut(auth)} className="text-sm text-slate-400">Sign out</button>
+          </div>
+          <StudentSchedule />
+        </>
+      )}
+
+      {/* ──── BOTTOM TAB BAR ──── */}
+      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 flex max-w-sm mx-auto z-50 shadow-[0_-4px_20px_rgba(0,0,0,0.05)]">
+        <button
+          onClick={() => setActiveTab('panel')}
+          className={`flex-1 flex flex-col items-center py-2.5 gap-0.5 transition ${
+            activeTab === 'panel' ? 'text-amber-500' : 'text-slate-400'
+          }`}
+        >
+          <span className="text-lg">🛞</span>
+          <span className="text-[10px] font-semibold tracking-wide">PANEL</span>
+        </button>
+        <button
+          onClick={() => setActiveTab('schedule')}
+          className={`flex-1 flex flex-col items-center py-2.5 gap-0.5 transition ${
+            activeTab === 'schedule' ? 'text-blue-600' : 'text-slate-400'
+          }`}
+        >
+          <span className="text-lg">📅</span>
+          <span className="text-[10px] font-semibold tracking-wide">SCHEDULE</span>
+        </button>
       </div>
     </div>
   );
